@@ -30,6 +30,7 @@ useries.yrs <- useries3[year >= min.survyr,
                               min.yr=min(year),
                               max.yr=max(year),
                               meanU.Umsy=mean(UdivUmsypref, na.rm=T),
+                              medianU.Umsy=median(UdivUmsypref, na.rm=T),
                               type_F=sum(UdivUmsypref==FdivFmsy),
                               type_ER=sum(UdivUmsypref==ERdivERmsy),
                               num.yrs.overage=sum(UdivUmsypref>1)), 
@@ -37,3 +38,6 @@ useries.yrs <- useries3[year >= min.survyr,
 useries.yrs[,"frac.yrs.overage":=num.yrs.overage/num.yrs]
 
 hist(useries.yrs$frac.yrs.overage)
+hist(useries.yrs$meanU.Umsy)
+
+plot(meanU.Umsy ~ frac.yrs.overage, useries.yrs)
