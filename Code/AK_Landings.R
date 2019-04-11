@@ -7,7 +7,7 @@ obs <- as.data.table(read.csv("Data/SpatialLand/Haynie_AKData/OBS081017.csv"))
 ft <- as.data.table(read.csv("Data/SpatialLand/Haynie_AKData/FT081017.csv"))
 
 #### Load species table (where spp matched to OBS IDs, RAM spp names, and FT)
-spp <- readRDS("Data/AK_spp_obs_RAM.rds")
+spp <- as.data.table(read.csv("Data/SpatialLand/Haynie_AKData/ak.master.spp.full.csv"))
 
 obs_spp <- merge(obs, spp, by.x="OBS_SPECIE_CODE", by.y="OBS_SPECIES_NO")
 
