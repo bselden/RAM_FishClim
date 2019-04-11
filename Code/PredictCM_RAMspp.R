@@ -1,12 +1,26 @@
 
 library(data.table)
 library(raster)
+library(Hmisc)
 
 load("Data/hauls_catch_Dec2017.RData", verbose=T)
 
 ### Species catch by haul
 catch.dt <- as.data.table(dat)
 haul.dt <- as.data.table(hauls)
+
+### Classify hauls into RAM regions
+haul.dt[,"subarea":=ifelse(regionfact=="AFSC_Aleutians", "BSAI",
+                           ifelse(regionfact=="AFSC_EBS", "BSAI",
+                              ifelse(regionfact=="AFSC_GOA", "GOA",
+                                     ifelse(regionfact=="AFSC_WCTri", "US West Coast",
+                                            ifelse(regionfact=="NEFSC_NEUS", "US East Coast",
+                                                   ifelse(regionfact=="NWFSC_WCAnn", "US West Coast",
+                                                          ifelse(regionfact=="SEFSC_GOMex", "US Southeast and Gulf",
+                                                                 ifelse(regionfact=="SCDNR_SEUS", "US Southeast and Gulf", 
+                                                                        ifelse(regionfact=="DFO_Newfoundland", "Canada East Coast",
+                                                                               ifelse(regionfact=="DFO_SoGulf", "Canada East Coast",
+                                                                                      ifelse(regionfact=="DFO_ScotianShelf", "Canada East Coast", NA)))))))))))]
 
 haul.stratum.obs <- haul.dt[,list(num.yrs.obs=length(unique(year))), by=list(stratum, regionfact, ocean, surveyfact)]
 yrs.obs.region <- haul.dt[,list(num.yrs.surv=length(unique(year))), by=list(regionfact, ocean, surveyfact)]
@@ -26,14 +40,17 @@ catch.wloc <- merge(catch.dt2,
 ### Clim Fits
 ### From Jim Morley 
 ### Downloaded from Amphiprion nicheMods_PlosOne2018
-# mod_list <- list.files("Data/CEmods", ".RData")
-# sppocean_list <- gsub("CEmods_Nov2017_fitallreg_2017_", "", gsub(".RData", "", mod_list))
-# 
-# pred_list <- vector("list", length(sppocean_list))
-
-### Black Sea Bass only
-mod_list <- c("CEmods_Nov2017_fitallreg_2017_centropristis striata_Atl.RData")
+mod_list <- list.files("Data/CEmods", ".RData")
 sppocean_list <- gsub("CEmods_Nov2017_fitallreg_2017_", "", gsub(".RData", "", mod_list))
+
+spp_lookup <- data.table(sppocean=sppocean_list)
+spp_lookup[,"spp":=capitalize(gsub("_.*$", "", sppocean))]
+
+pred_list <- vector("list", length(sppocean_list))
+
+# ### Black Sea Bass only
+# mod_list <- c("CEmods_Nov2017_fitallreg_2017_centropristis striata_Atl.RData")
+# sppocean_list <- gsub("CEmods_Nov2017_fitallreg_2017_", "", gsub(".RData", "", mod_list))
 
 pred_list <- vector("list", length(sppocean_list))
 
@@ -99,8 +116,6 @@ points(lat.cent.cm ~ year,
        type="o", col="blue", ylab="Latitude (w=predicted wtcpue)")
 
 
-######################
-### MaxEnt with presence only
 
 
 
