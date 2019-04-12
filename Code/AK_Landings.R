@@ -52,6 +52,11 @@ plot(lat ~ lon, stat6_area_loc, xlim=c(-180, -100), cex=0.25)
 points(lat ~ lon, stat6_old_only, col="red")
 
 
+### Prince William Sound Salmon areas
+
+
+
+
 # Merge location information into fish tickets ----------------------------
 ft_stat <- merge(ft_spp, stat6_area_loc, by.x="ADFG_I_STAT_AREA", by.y="STAT_AREA")
 
@@ -69,19 +74,20 @@ setorder(ft_nonstat_area, ADFG_I_STAT_AREA)
 
 #write.csv(ft_nonstat_area, "Data/nonstat_area.csv")
 
-### Species with lots of landings not in stat6 areas
+### Species with majority of years with landings not in stat6 areas (most all 26 yrs)
 # Herring (Clupea harengus pallasi)
 # Salmon (Oncorhynchus spp)
 # Shrimp (Panopea generosa, Pandalus borealis, Pandalus hypsinotis, Pandalus platyceros)
 # Urchin (S. franciscanus), sea cucumber (Parastichopus californicus)
 # Crab (Cancer magister)
-ft_nonstat[frac.nonstat>0.5, list(num.years=length(unique(AKFIN_YEAR))), by=list(spp)]
+spp_nonstat <-  ft_nonstat[frac.nonstat>0.5, list(num.years=length(unique(AKFIN_YEAR))), by=list(spp)]
+spp_exclude <- spp_nonstat[num.years>20]$spp
 
-### Most landings in 5 digit STAT_AREAs: FMP_SUBAREA "SEI"
-ft_spp[spp=="Pandalus borealis", list(n_ft=sum(N_FT)), by=list(ADFG_I_STAT_AREA, FMP_SUBAREA)]
 
-### 
-obs_spp[ADFG_STAT_AREA_CODE < 100000]
+### Most landings for shrimp in 5 digit STAT_AREAs: FMP_AREA "INSD" FMP_SUBAREA "SEI"
+# Inside/Southeast (INSD)
+# These must be southeast Alaska shellfish stat areas 
+# see maps in GIS_Data/SEAK_SalmonShellfish that have numbers matching these 101-11 in Chart5b through 192-60 in Chart 5e
+ft_spp[spp=="Pandalus borealis", list(n_ft=sum(N_FT)), by=list(ADFG_I_STAT_AREA, FMP_AREA, FMP_SUBAREA)]
 
-### Get geographic information for old statistical areas based on union of new shapefiles
-old_stat <- read.csv("Data/nonstat_area_complete.csv")
+
