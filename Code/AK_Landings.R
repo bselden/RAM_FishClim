@@ -52,10 +52,6 @@ plot(lat ~ lon, stat6_area_loc, xlim=c(-180, -100), cex=0.25)
 points(lat ~ lon, stat6_old_only, col="red")
 
 
-### Prince William Sound Salmon areas
-
-
-
 
 # Merge location information into fish tickets ----------------------------
 ft_stat <- merge(ft_spp, stat6_area_loc, by.x="ADFG_I_STAT_AREA", by.y="STAT_AREA")
@@ -88,6 +84,7 @@ spp_exclude <- spp_nonstat[num.years>20]$spp
 # Inside/Southeast (INSD)
 # These must be southeast Alaska shellfish stat areas 
 # see maps in GIS_Data/SEAK_SalmonShellfish that have numbers matching these 101-11 in Chart5b through 192-60 in Chart 5e
+### We don't have surveys in SE Alaska anyway, so OK to exclude
 ft_spp[spp=="Pandalus borealis", list(n_ft=sum(N_FT)), by=list(ADFG_I_STAT_AREA, FMP_AREA, FMP_SUBAREA)]
 
 
