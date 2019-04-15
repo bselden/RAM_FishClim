@@ -132,7 +132,7 @@ cent_master[,"nyrs.obs":=length(unique(year[is.finite(num.obs)])), by=list(spp, 
 
 #### Rate of change over time (only for species which were observed in at least 5 years in a subarea)
 ### 185 spp, subarea combinations
-cent_lm <- cent_master[nyrs.obs > 5 & !(subarea %in% c("Canada East Coast", "US Southeast and Gulf")),j={
+cent_lm <- cent_master[nyrs.obs > 5,j={
   print(paste0(spp, " ", subarea))
   t.dt <- .SD
   lm.obs <- lm(lat.cent ~ year)
