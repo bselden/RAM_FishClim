@@ -16,16 +16,22 @@ useries <- as.data.table(timeseries_values_views[,which(colnames(timeseries_valu
 ### limit to just US or Canada
 stock.dt <- as.data.table(stock)
 stock.dt[,"area":=gsub( "-.*$", "", areaid)] #a dash, followed by any character (.) any number of times (*) until the end of the string ($)
-stock.us <- stock.dt[area %in% c("USA", "Canada")]
-stock.us[,"ak_subarea":=ifelse(region=="US Alaska", gsub("USA-NMFS-", "", areaid), NA)]
-stock.us[,"subarea":=ifelse(is.na(ak_subarea), region, 
-                                 ifelse(ak_subarea=="BS", "EBS", 
-                                        ifelse(ak_subarea=="AI", "AI",
-                                            ifelse(ak_subarea=="GA", "GOA",
-                                               ifelse(ak_subarea=="EBSAI", "EBS",
-                                                      ifelse(ak_subarea=="EBS", "EBS",
-                                                             ifelse(ak_subarea=="EBSAIGA", "EBS", #for sablefish
-                                                                ifelse(ak_subarea=="BSAI", "EBS", NA))))))))]
+stock.us <- stock.dt[area %in% c("USA")]
+#stock.us[,"ak_subarea":=ifelse(region=="US Alaska", gsub("USA-NMFS-", "", areaid), NA)]
+stock.us[,"ram_subarea":=ifelse(region%in% c("US Alaska", "US Southeast and Gulf"), 
+                                gsub("USA-NMFS-", "", areaid), NA)]
+stock.us[,"subarea":=ifelse(is.na(ram_subarea), region, 
+                                 ifelse(ram_subarea=="BS", "EBS", 
+                                        ifelse(ram_subarea=="AI", "AI",
+                                            ifelse(ram_subarea=="GA", "GOA",
+                                               ifelse(ram_subarea=="EBSAI", "EBS",
+                                                      ifelse(ram_subarea=="EBS", "EBS",
+                                                             ifelse(ram_subarea=="EBSAIGA", "EBS", #for sablefish
+                                                                ifelse(ram_subarea=="BSAI", "EBS", 
+                                                                       ifelse(ram_subarea=="SATLC", "SEUS",
+                                                                              ifelse(ram_subarea=="SATL", "SEUS", 
+                                                                                     ifelse(ram_subarea=="ATL", "SEUS",
+                                                                                        ifelse(ram_subarea=="GM", "GMex", NA))))))))))))]
 
 ### Years in survey
 yrs.surv <- data.table(region=c("US East Coast", "US Alaska", "US West Coast", "US Southeast and Gulf", "Canada East Coast"),
@@ -36,11 +42,11 @@ yrs.surv <- data.table(region=c("US East Coast", "US Alaska", "US West Coast", "
 ### Only 4 species have U time series
 
 ### Merge with stock table
-useries2 <- merge(useries, stock.us, by=c("stockid"))
+useries2 <- merge(useries, stock.us[!(is.na(subarea))], by=c("stockid"))
 useries3 <- merge(useries2[!(is.na(UdivUmsypref)),], yrs.surv, by=c("region"))
 
 ### Total biomass by species (add within a stock region)
-useries3[,"num.stocks":=length(unique(stockid)), by=list(scientificname, region, year)]
+useries3[,"num.stocks":=length(unique(stockid)), by=list(scientificname, subarea, region)]
 useries3[,"TB_spp":=ifelse(num.stocks>1, sum(TB, na.rm=T), TB), 
          by=list(scientificname, region, year)]
 useries3[,"SSB_spp":=ifelse(num.stocks>1, sum(SSB, na.rm=T), SSB), 
@@ -53,7 +59,7 @@ useries_spp <- useries3[,
                         list(U.Umsy.spp =ifelse(num.stocks>1,
                                                 sum(UdivUmsypref*frac.stock, na.rm=T),
                                                 UdivUmsypref)), 
-                        by=list(scientificname, commonname, subarea, region, year, min.survyr, num.stocks)]
+                        by=list(scientificname, subarea, region, year, min.survyr, num.stocks)]
 
 # 
 # ### species names with U/Umsy ts
@@ -72,7 +78,7 @@ uspp.yrs <- useries_spp[year >= min.survyr,
                        list(num.yrs=length(unique(year)),
                             meanU.Umsy=mean(U.Umsy.spp, na.rm=T),
                             num.yrs.overage=length(unique(year[U.Umsy.spp>1]))), 
-                       by=list(subarea, region, scientificname, commonname, num.stocks)]
+                       by=list(subarea, region, scientificname, num.stocks)]
 
 # ustock.yrs[,"frac.yrs.overage":=num.yrs.overage/num.yrs]
 uspp.yrs[,"frac.yrs.overage":=num.yrs.overage/num.yrs]
