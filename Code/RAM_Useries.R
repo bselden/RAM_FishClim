@@ -6,7 +6,7 @@ library(stringr)
 load("Data/DBdata.RData", verbose=T)
 
 ### Extract U/Umsy time series 
-colkeep <- c("stockid", "year", "UdivUmsypref", "FdivFmsy", "ERdivERmsy", "CPUE", "EFFORT", "TBbest", "TB", "SSB")
+colkeep <- c("stockid", "year", "UdivUmsypref", "FdivFmsy", "ERdivERmsy", "CPUE", "EFFORT", "TBbest", "TB", "SSB", "TC")
 useries <- as.data.table(timeseries_values_views[,which(colnames(timeseries_values_views)%in%colkeep)])
 
 
@@ -16,7 +16,7 @@ useries <- as.data.table(timeseries_values_views[,which(colnames(timeseries_valu
 ### limit to just US or Canada
 stock.dt <- as.data.table(stock)
 stock.dt[,"area":=gsub( "-.*$", "", areaid)] #a dash, followed by any character (.) any number of times (*) until the end of the string ($)
-stock.us <- stock.dt[area %in% c("USA")]
+stock.us <- stock.dt[area %in% c("USA", "Canada")]
 stock.us[,"ak_subarea":=ifelse(region=="US Alaska", gsub("USA-NMFS-", "", areaid), NA)]
 stock.us[,"subarea":=ifelse(is.na(ak_subarea), region, 
                                  ifelse(ak_subarea=="BS", "EBS", 
@@ -28,13 +28,16 @@ stock.us[,"subarea":=ifelse(is.na(ak_subarea), region,
                                                                 ifelse(ak_subarea=="BSAI", "EBS", NA))))))))]
 
 ### Years in survey
-yrs.surv <- data.table(region=c("US East Coast", "US Alaska", "US West Coast", "US Southeast and Gulf"),
-                       min.survyr=c(1968, 1981, 1981, 1981),
-                       max.survyr=c(2016, 2016, 2016, 2016))
+yrs.surv <- data.table(region=c("US East Coast", "US Alaska", "US West Coast", "US Southeast and Gulf", "Canada East Coast"),
+                       min.survyr=c(1968, 1981, 1981, 1981, 1971),
+                       max.survyr=c(2016, 2016, 2016, 2016, 2016))
+
+### If including Canada, Scotian Shelf = 1970-2011, So Gulf= 1971-2009, Newfoundland=1995-2011
+### Only 4 species have U time series
 
 ### Merge with stock table
-useries2 <- merge(useries[!(is.na(UdivUmsypref)),], stock.us, by=c("stockid"))
-useries3 <- merge(useries2, yrs.surv, by=c("region"))
+useries2 <- merge(useries, stock.us, by=c("stockid"))
+useries3 <- merge(useries2[!(is.na(UdivUmsypref)),], yrs.surv, by=c("region"))
 
 ### Total biomass by species (add within a stock region)
 useries3[,"num.stocks":=length(unique(stockid)), by=list(scientificname, region, year)]
