@@ -84,3 +84,6 @@ plot(meanU.Umsy ~ frac.yrs.overage, uspp.yrs)
 # metadata.nam[,"stock_match":=ifelse(stockid==stock,1, 0)]
 # 
 # useries_wmeta <- merge(useries.yrs, metadata.dt, by=c("stockid", "region"))
+
+
+save(useries3, uspp.yrs, file="Output/RAM_U_out.R")
