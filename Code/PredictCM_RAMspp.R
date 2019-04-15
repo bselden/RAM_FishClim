@@ -27,8 +27,8 @@ yrs.obs.region <- haul.dt[,list(num.yrs.surv=length(unique(year))), by=list(regi
 haul.stratum.obs2 <- merge(haul.stratum.obs, yrs.obs.region, by=c("regionfact", "ocean", "subarea", "surveyfact"))
 haul.stratum.obs2[,"frac.yrs":=num.yrs.obs/num.yrs.surv]
 
-### Limit to strata observed in >=90% of years of a survey
-haul.dt2 <- haul.dt[stratum %in% haul.stratum.obs2[frac.yrs>=0.9]$stratum]
+### Limit to strata observed in >=90% of years of a survey & year >=1968 (so both spring and fall combined for NEUS)
+haul.dt2 <- haul.dt[stratum %in% haul.stratum.obs2[frac.yrs>=0.9]$stratum & year>=1968]
 catch.dt2 <- catch.dt[haulid %in% haul.dt2$haulid]
 
 ### Merge with haul location
@@ -143,8 +143,10 @@ cent_lm <- cent_master[nyrs.obs > 5 & !(subarea %in% c("Canada East Coast", "US 
        lm.pred.slope=summary(lm.pred)$coefficients[2,1],
        lm.pred.p=summary(lm.pred)$coefficients[2,4],
        lm.pred.r2=summary(lm.pred)$r.squared,
-       nyrs.obs=length(unique(is.finite(t.dt$num.obs))),
+       nyrs.obs=sum(is.finite(t.dt$num.obs)),
        num.obs=sum(t.dt$num.obs, na.rm=T))
 }, by=list(spp, subarea)]
 
+cent_master_lim <- cent_master[nyrs.obs > 5 & !(subarea %in% c("Canada East Coast", "US Southeast and Gulf"))]
 
+save(cent_master_lim, cent_lm, file="Output/cent_out.RData")
