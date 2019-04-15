@@ -10,8 +10,8 @@ catch.dt <- as.data.table(dat)
 haul.dt <- as.data.table(hauls)
 
 ### Classify hauls into RAM regions
-haul.dt[,"subarea":=ifelse(regionfact=="AFSC_Aleutians", "BSAI",
-                           ifelse(regionfact=="AFSC_EBS", "BSAI",
+haul.dt[,"subarea":=ifelse(regionfact=="AFSC_EBS", "EBS",
+                           ifelse(regionfact=="AFSC_Aleutians", "AI", 
                               ifelse(regionfact=="AFSC_GOA", "GOA",
                                      ifelse(regionfact=="AFSC_WCTri", "US West Coast",
                                             ifelse(regionfact=="NEFSC_NEUS", "US East Coast",

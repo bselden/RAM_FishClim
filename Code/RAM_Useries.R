@@ -19,11 +19,13 @@ stock.dt[,"area":=gsub( "-.*$", "", areaid)] #a dash, followed by any character 
 stock.us <- stock.dt[area %in% c("USA")]
 stock.us[,"ak_subarea":=ifelse(region=="US Alaska", gsub("USA-NMFS-", "", areaid), NA)]
 stock.us[,"subarea":=ifelse(is.na(ak_subarea), region, 
-                                 ifelse(ak_subarea=="BS", "BSAI", 
-                                        ifelse(ak_subarea=="GA", "GOA",
-                                               ifelse(ak_subarea=="EBSAI", "BSAI",
-                                                      ifelse(ak_subarea=="EBS", "BSAI",
-                                                             ifelse(ak_subarea=="BSAI", "BSAI", NA))))))]
+                                 ifelse(ak_subarea=="BS", "EBS", 
+                                        ifelse(ak_subarea=="AI", "AI",
+                                            ifelse(ak_subarea=="GA", "GOA",
+                                               ifelse(ak_subarea=="EBSAI", "EBS",
+                                                      ifelse(ak_subarea=="EBS", "EBS",
+                                                             ifelse(ak_subarea=="EBSAIGA", "EBS", #for sablefish
+                                                                ifelse(ak_subarea=="BSAI", "EBS", NA))))))))]
 
 ### Years in survey
 yrs.surv <- data.table(region=c("US East Coast", "US Alaska", "US West Coast", "US Southeast and Gulf"),
@@ -35,43 +37,48 @@ useries2 <- merge(useries[!(is.na(UdivUmsypref)),], stock.us, by=c("stockid"))
 useries3 <- merge(useries2, yrs.surv, by=c("region"))
 
 ### Total biomass by species (add within a stock region)
-useries3[,"TB_spp":=sum(TBbest), by=list(scientificname, region, year)]
-useries3[,"SSB_spp":=sum(SSB), by=list(scientificname, region, year)]
-useries3[,"frac.TB":=TBbest/TB_spp]
+useries3[,"num.stocks":=length(unique(stockid)), by=list(scientificname, region, year)]
+useries3[,"TB_spp":=ifelse(num.stocks>1, sum(TB, na.rm=T), TB), 
+         by=list(scientificname, region, year)]
+useries3[,"SSB_spp":=ifelse(num.stocks>1, sum(SSB, na.rm=T), SSB), 
+         by=list(scientificname, region, year)]
+useries3[,"frac.TB":=TB/TB_spp]
 useries3[,"frac.SSB":=SSB/SSB_spp]
-useries3[,"frac.stock":=ifelse(is.finite(TB_spp), frac.TB, frac.SSB)]
-useries3[,"U.Umsy.spp":=sum(UdivUmsypref*frac.stock), by=list(scientificname, region, year)]
+useries3[,"frac.stock":=ifelse(TB_spp==0 | is.na(TB_spp), frac.SSB, frac.TB)]
 
+useries_spp <- useries3[,
+                        list(U.Umsy.spp =ifelse(num.stocks>1,
+                                                sum(UdivUmsypref*frac.stock, na.rm=T),
+                                                UdivUmsypref)), 
+                        by=list(scientificname, commonname, subarea, region, year, min.survyr, num.stocks)]
 
-### species names with U/Umsy ts
-ustock.yrs <- useries3[year >= min.survyr,
-                        list(num.yrs=length(UdivUmsypref),
-                              min.yr=min(year),
-                              max.yr=max(year),
-                              meanU.Umsy=mean(UdivUmsypref, na.rm=T),
-                              medianU.Umsy=median(UdivUmsypref, na.rm=T),
-                              type_F=sum(UdivUmsypref==FdivFmsy),
-                              type_ER=sum(UdivUmsypref==ERdivERmsy),
-                              num.yrs.overage=sum(UdivUmsypref>1)), 
-                        by=list(region, area, areaid, stockid, scientificname, commonname)]
+# 
+# ### species names with U/Umsy ts
+# ustock.yrs <- useries3[year >= min.survyr,
+#                         list(num.yrs=length(UdivUmsypref),
+#                               min.yr=min(year),
+#                               max.yr=max(year),
+#                               meanU.Umsy=mean(UdivUmsypref, na.rm=T),
+#                               medianU.Umsy=median(UdivUmsypref, na.rm=T),
+#                               type_F=sum(UdivUmsypref==FdivFmsy),
+#                               type_ER=sum(UdivUmsypref==ERdivERmsy),
+#                               num.yrs.overage=sum(UdivUmsypref>1)), 
+#                         by=list(region, area, areaid, stockid, scientificname, commonname)]
 
-uspp.yrs <- useries3[year >= min.survyr,
+uspp.yrs <- useries_spp[year >= min.survyr,
                        list(num.yrs=length(unique(year)),
-                            num.stocks=length(unique(stockid)),
                             meanU.Umsy=mean(U.Umsy.spp, na.rm=T),
                             num.yrs.overage=length(unique(year[U.Umsy.spp>1]))), 
-                       by=list(region, scientificname, commonname)]
+                       by=list(subarea, region, scientificname, commonname, num.stocks)]
 
-ustock.yrs[,"frac.yrs.overage":=num.yrs.overage/num.yrs]
+# ustock.yrs[,"frac.yrs.overage":=num.yrs.overage/num.yrs]
 uspp.yrs[,"frac.yrs.overage":=num.yrs.overage/num.yrs]
 
-setorder(ustock.yrs, scientificname)
+# setorder(ustock.yrs, scientificname)
 setorder(uspp.yrs, scientificname)
 
 par(mfrow=c(2,2))
-hist(ustock.yrs$frac.yrs.overage)
 hist(uspp.yrs$frac.yrs.overage)
-hist(ustock.yrs$meanU.Umsy)
 hist(uspp.yrs$meanU.Umsy)
 
 plot(meanU.Umsy ~ frac.yrs.overage, uspp.yrs)
@@ -86,4 +93,4 @@ plot(meanU.Umsy ~ frac.yrs.overage, uspp.yrs)
 # useries_wmeta <- merge(useries.yrs, metadata.dt, by=c("stockid", "region"))
 
 
-save(useries3, uspp.yrs, file="Output/RAM_U_out.R")
+save(useries3, uspp.yrs, file="Output/RAM_U_out.RData")
