@@ -109,6 +109,8 @@ cent.obs <- catch.wloc[spp %in% spp_lookup$spp,
                             lat.cent.pres=weighted.mean(lat, w=presfit),
                             num.obs=sum(presfit)), 
                        by=list(spp, sppocean, subarea, year)]
+setorder(cent.obs, year)
+
 
 ### Predicted centroid
 cent.cm <- pred.dt.wsub[!(is.na(subarea)),list(lat.cent.cm =weighted.mean(lat, w=pred.total),
@@ -116,18 +118,27 @@ cent.cm <- pred.dt.wsub[!(is.na(subarea)),list(lat.cent.cm =weighted.mean(lat, w
               by=list(spp, sppocean, subarea, year)]
 setorder(cent.cm, year)
 
-plot(lat.cent ~ year, 
-     cent.obs[year >=1968 & sppocean=="centropristis striata_Atl" & subarea=="US East Coast"], 
-     type="o", ylab="Latitude (w=wtcpue)")
-points(lat.cent.cm ~ year,
-       cent.cm[year>=1968 & sppocean=="centropristis striata_Atl" & subarea=="US East Coast"],
-       type="o", col="blue", ylab="Latitude (w=predicted wtcpue)")
 
 
 
 ### Merge observed and predicted (more records when predicting when no observations of a species in that year)
 cent_master <- merge(cent.obs, cent.cm, by=c("sppocean", "spp", "subarea", "year"), all.y=T)
 cent_master[,"nyrs.obs":=length(unique(year[is.finite(num.obs)])), by=list(spp, subarea)]
+
+### Centroid in previous year for obs and predicted
+cent_master[,"lat.cent.prev":=data.table::shift(lat.cent, n=1, type="lag"), by=list(sppocean, spp, subarea)]
+cent_master[,"lat.cent.cm.prev":=data.table::shift(lat.cent.cm, n=1, type="lag"), by=list(sppocean, spp, subarea)]
+
+### Annual difference
+cent_master[,"lat.cent.diff":= lat.cent - lat.cent.prev, by=list(sppocean, spp, subarea)]
+cent_master[,"lat.cent.cm.diff":=lat.cent.cm - lat.cent.cm.prev, by=list(sppocean, spp, subarea)]
+
+### Observed - predicted annual diff
+cent_master[,"annual.obsminuspred":=lat.cent.diff - lat.cent.cm.diff]
+cent_master[,"sign.pred":=sign(lat.cent.cm.diff)]
+cent_master[,"annual.bias":=annual.obsminuspred*sign.pred]
+
+hist(cent_master$annual.bias)
 
 
 #### Rate of change over time (only for species which were observed in at least 5 years in a subarea)
@@ -147,6 +158,46 @@ cent_lm <- cent_master[nyrs.obs > 5,j={
        num.obs=sum(t.dt$num.obs, na.rm=T))
 }, by=list(spp, subarea)]
 
+cent_lm[,"obsminuspred":=ifelse(lm.pred.slope>0, lm.obs.slope - lm.pred.slope, -(lm.obs.slope-lm.pred.slope))]
+
 cent_master_lim <- cent_master[nyrs.obs > 5 & !(subarea %in% c("Canada East Coast", "US Southeast and Gulf"))]
+
+png("Figures/lagclim_null.png", height=5, width=5, units="in", res=300)
+plot(lm.obs.slope ~ lm.pred.slope, cent_lm)
+points(lm.obs.slope ~ lm.pred.slope, cent_lm[obsminuspred<0], col="blue", pch=10, cex=0.5)
+abline(a=0, b=1, col="red")
+abline(h=0, lty=2)
+abline(v=0, lty=2)
+dev.off()
+
+png("Figures/BSB_obsonly.png", height=5, width=5, units="in", res=300)
+plot(lat.cent ~ year, 
+     cent.obs[year >=1968 & sppocean=="centropristis striata_Atl" & subarea=="US East Coast"], 
+     type="o", ylab="Latitude (w=wtcpue)")
+abline(h=mean(cent.obs[year >=1968 & sppocean=="centropristis striata_Atl" & subarea=="US East Coast"]$lat.cent), 
+       col="darkgreen", lty=2, lwd=2)
+legend("topleft", legend=c("mean centroid"), col="darkgreen", lty=2, lwd=2, bty="n")
+dev.off()
+
+
+png("Figures/BSB_obspred.png", height=5, width=5, units="in", res=300)
+plot(lat.cent ~ year, 
+     cent.obs[year >=1968 & sppocean=="centropristis striata_Atl" & subarea=="US East Coast"], 
+     type="o", ylab="Latitude (w=wtcpue)")
+points(lat.cent.cm ~ year,
+       cent.cm[year>=1968 & sppocean=="centropristis striata_Atl" & subarea=="US East Coast"],
+       type="o", col="gray", ylab="Latitude (w=predicted wtcpue)")
+dev.off()
+
+### chilepepper rockfish
+png("Figures/chile_obspred.png", height=5, width=5, units="in", res=300)
+plot(lat.cent.cm ~ year,
+       cent.cm[year>=1968 & spp=="Sebastes goodei"],
+       type="o", col="gray", ylab="Latitude (w=predicted wtcpue)")
+points(lat.cent ~ year, 
+     cent.obs[year >=1968 & spp=="Sebastes goodei"], 
+     type="o", ylab="Latitude (w=wtcpue)")
+dev.off()
+
 
 save(cent_master_lim, cent_lm, file="Output/cent_out.RData")
