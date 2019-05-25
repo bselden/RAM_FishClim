@@ -125,13 +125,23 @@ setorder(cent.cm, year)
 cent_master <- merge(cent.obs, cent.cm, by=c("sppocean", "spp", "subarea", "year"), all.y=T)
 cent_master[,"nyrs.obs":=length(unique(year[is.finite(num.obs)])), by=list(spp, subarea)]
 
-### Centroid in previous year for obs and predicted
-cent_master[,"lat.cent.prev":=data.table::shift(lat.cent, n=1, type="lag"), by=list(sppocean, spp, subarea)]
-cent_master[,"lat.cent.cm.prev":=data.table::shift(lat.cent.cm, n=1, type="lag"), by=list(sppocean, spp, subarea)]
+# ### Centroid in previous year for obs and predicted
+# cent_master[,"lat.cent.prev":=data.table::shift(lat.cent, n=1, type="lag"), by=list(sppocean, spp, subarea)]
+# cent_master[,"lat.cent.cm.prev":=data.table::shift(lat.cent.cm, n=1, type="lag"), by=list(sppocean, spp, subarea)]
+# 
+# ### Annual difference
+# cent_master[,"lat.cent.diff":= lat.cent - lat.cent.prev, by=list(sppocean, spp, subarea)]
+# cent_master[,"lat.cent.cm.diff":=lat.cent.cm - lat.cent.cm.prev, by=list(sppocean, spp, subarea)]
+
+### Centroid in next year for obs and predicted
+cent_master[,"lat.cent.next":=data.table::shift(lat.cent, n=1, type="lead"), by=list(sppocean, spp, subarea)]
+cent_master[,"lat.cent.cm.next":=data.table::shift(lat.cent.cm, n=1, type="lead"), by=list(sppocean, spp, subarea)]
 
 ### Annual difference
-cent_master[,"lat.cent.diff":= lat.cent - lat.cent.prev, by=list(sppocean, spp, subarea)]
-cent_master[,"lat.cent.cm.diff":=lat.cent.cm - lat.cent.cm.prev, by=list(sppocean, spp, subarea)]
+cent_master[,"lat.cent.diff":= lat.cent.next - lat.cent, by=list(sppocean, spp, subarea)]
+cent_master[,"lat.cent.cm.diff":=lat.cent.cm.next - lat.cent.cm, by=list(sppocean, spp, subarea)]
+
+
 
 ### Observed - predicted annual diff
 cent_master[,"annual.obsminuspred":=lat.cent.diff - lat.cent.cm.diff]
@@ -160,7 +170,11 @@ cent_lm <- cent_master[nyrs.obs > 5,j={
 
 cent_lm[,"obsminuspred":=ifelse(lm.pred.slope>0, lm.obs.slope - lm.pred.slope, -(lm.obs.slope-lm.pred.slope))]
 
-cent_master_lim <- cent_master[nyrs.obs > 5 & !(subarea %in% c("Canada East Coast", "US Southeast and Gulf"))]
+# Limit species to those observed in more than 5 years
+# Remove Canada and US Southeast (maybe keep those for just the fishing intensity analysis)
+#cent_master_lim <- cent_master[nyrs.obs > 5 & !(subarea %in% c("Canada East Coast", "US Southeast and Gulf"))]
+cent_master_lim <- cent_master[nyrs.obs > 5]
+
 
 png("Figures/lagclim_null.png", height=5, width=5, units="in", res=300)
 plot(lm.obs.slope ~ lm.pred.slope, cent_lm)
