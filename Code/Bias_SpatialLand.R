@@ -1,3 +1,5 @@
+### Objective: Evaluate effect of fishing on bias between observed and predicted latitude shift
+
 library(data.table)
 library(lmerTest)
 
