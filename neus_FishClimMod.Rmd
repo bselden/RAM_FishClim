@@ -1,0 +1,630 @@
+
+
+### Objective: Evaluate whether harvest influences presence (or biomass) of a species
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table);
+library(mgcv);
+library(plotrix)
+library(tidyr);
+library(Hmisc);
+#install.packages('plm');
+library(plm);
+library(ggplot2);
+```
+
+
+
+
+
+```{r Load datasets}
+#setwd("/Users/rebeccaselden/Documents/Collaborations/FishClim")
+surv.dat <- readRDS("Data/dat.latbin2.rds")
+land.dat <- readRDS("Data/total.land.latbin.rds")
+setorder(land.dat, spp, year)
+```
+
+### Examine relationship between latitude and SBT
+Very strong sigmoid relationship between SBT and latitude
+Very strong linear relationship between SST and latitude
+Not a surprise that these two variables no longer significant when have spatial fixed effects
+--> Clarification from meeting with Malin, the spatial trends in temperature will be soaked up by spatial fixed effects,
+but the temporal variation in temperature is what will be evaluated (which is what we specifically want to evaluate for climate change)
+```{r temp vs lat}
+boxplot(SBT.actual ~ lat.bin, surv.dat[spp=="Clupea harengus"], xlab="Latitude", ylab="SBT.actual")
+boxplot(SST.actual ~ lat.bin, surv.dat[spp=="Clupea harengus"], xlab="Latitude", ylab="SST.actual")
+
+```
+
+
+### Assign catch=0 for areas surveyed and no catch observed 
+
+
+ Make sure each species has a landing record for each year and lat bin in the survey
+ Get rid of southernmost survey bins because not observed in every year
+
+```{r Assign catch to 0}
+combined.dat <- merge(surv.dat[!(is.na(lat.bin))& year<2015 &!(lat.bin %in% c("30.5", "31.5", "32.5", "33.5", "34.5"))], 
+                      land.dat, by=c("lat.bin", "year", "spp"), all.x=T)
+setorder(combined.dat, spp, year, lat.bin)
+
+combined.dat[,"land_mt":=ifelse(is.na(tl_mt), 0, tl_mt)]
+```
+
+
+### Standardize catch so mean of 0 and sd=1 within a species
+ If no catch in any year, give value of 0
+```{r standardize catch}
+catch.scale <- combined.dat[,list(mean_land=mean(land_mt, na.rm=T), sd_land=sd(land_mt, na.rm=T)), by=list(spp)]
+combined.dat2 <- merge(combined.dat, catch.scale, by="spp")
+
+combined.dat2[,"land_scaled":=ifelse(mean_land==0, 0, scale(land_mt, center=T, scale=T)), by=list(spp)]
+
+#land_yr <- combined.dat2[,list(mean_land=mean(land_mt), mean_land_scaled=mean(land_scaled)), by=list(spp, year)]
+```
+
+
+### Standardize Temperature within spp
+
+Normalize each temperature for each species range to a mean of 0 and SD of 1 across spp geo range.
+ Subtract its mean temperature of occurrence (or of biomass) from the observed temperature.
+ Then divide by standard deviation of temperature of occurrence (or of biomass)
+```{r examine temperature of occurrence}
+par(mfrow=c(2,2))
+weighted.hist(combined.dat2[spp=="Gadus morhua"]$SBT.actual, 
+              w=combined.dat2[spp=="Gadus morhua"]$wtcpuenal, freq=F, main="Cod SBT, w=Biomass")
+weighted.hist(combined.dat2[spp=="Gadus morhua"]$SBT.actual, 
+              w=combined.dat2[spp=="Gadus morhua"]$pres2, freq=F, main="Cod SBT, w=Presence")
+weighted.hist(combined.dat2[spp=="Centropristis striata"]$SBT.actual, 
+              w=combined.dat2[spp=="Centropristis striata"]$wtcpuenal, freq=F, main="Dogfish SBT, w=Biomass")
+weighted.hist(combined.dat2[spp=="Centropristis striata"]$SBT.actual, 
+              w=combined.dat2[spp=="Centropristis striata"]$pres2, freq=F, main="Dogfish SBT, w=Presence")
+```
+
+Calculate mean SBT and SST of presence weighted by presence and biomass
+```{r standardize temperature}
+combined.dat2[,"mean.SBTpres":=weighted.mean(SBT.actual, w=pres2), by=list(spp)]
+combined.dat2[,"mean.SSTpres":=weighted.mean(SST.actual, w=pres2), by=list(spp)]
+
+combined.dat2[,"sd.SBTpres":=sqrt(wtd.var(SBT.actual, weights=pres2)), by=list(spp)]
+combined.dat2[,"sd.SSTpres":=sqrt(wtd.var(SST.actual, weights=pres2)), by=list(spp)]
+
+combined.dat2[,"mean.SBTbio":=weighted.mean(SBT.actual, w=wtcpuenal), by=list(spp)]
+combined.dat2[,"mean.SSTbio":=weighted.mean(SST.actual, w=wtcpuenal), by=list(spp)]
+
+combined.dat2[,"sd.SBTbio":=sqrt(wtd.var(SBT.actual, weights=wtcpuenal)), by=list(spp)]
+combined.dat2[,"sd.SSTbio":=sqrt(wtd.var(SST.actual, weights=wtcpuenal)), by=list(spp)]
+
+combined.dat2[,"scaled.SBT":=(SBT.actual - mean.SBTpres)/sd.SBTpres]
+combined.dat2[,"scaled.SST":=(SST.actual - mean.SSTpres)/sd.SSTpres]
+
+plot(wtcpuenal ~ scaled.SBT, combined.dat2[spp=="Gadus morhua"])
+```
+
+### Lag variables in time 
+
+Lag catch, biomass, presence, and environment by one, two, and 3 year
+```{r lag variables in time}
+vars <- c("pres2", "wtcpue", "wtcpuenal", "land_mt", "land_scaled",
+          "scaled.SBT", "avg.SBT.min", "avg.SBT.max", 
+          "scaled.SST", "avg.SST.min", "avg.SST.max")
+lag1cols <- paste("lag1", vars, sep=".")
+lag2cols <- paste("lag2", vars, sep=".")
+lag3cols <- paste("lag3", vars, sep=".")
+
+lag.dt <- copy(combined.dat2)
+
+lag.dt[,(lag1cols):=shift(.SD, n=1, type="lag"), by=list(spp, lat.bin), .SDcols=vars]
+lag.dt[,(lag2cols):=shift(.SD, n=2, type="lag"), by=list(spp, lat.bin), .SDcols=vars]
+lag.dt[,(lag3cols):=shift(.SD, n=3, type="lag"), by=list(spp, lat.bin), .SDcols=vars]
+
+
+
+### Examine autocorrelation in biomass
+plot(wtcpuenal ~ lag1.wtcpuenal, lag.dt[spp=="Gadus morhua"], main="Cod")
+abline(a=0, b=1, col="red")
+
+plot(wtcpuenal ~ lag1.wtcpuenal, lag.dt[spp=="Centropristis striata"], main="BSB")
+abline(a=0, b=1, col="red")
+```
+
+
+
+
+
+
+### GAM for Log Bio
+Note: depth in a latitude bin does vary by year based on sampling location
+
+Model (log bio) ~ scaled SBT + scaled SST + depth + landings in yr-1 + presence in yr-1 + random(spp)
+
+Test with BSB
+```{r gam for logbio}
+bsb.mod.bio <- gam(wtcpuenal ~ s(scaled.SBT)+ s(scaled.SST)+ s(depth) + s(lag1.land_scaled) + s(lag1.pres2),
+                   family=gaussian, data=lag.dt[spp%in%c("Centropristis striata")])
+plot(bsb.mod.bio)
+summary(bsb.mod.bio)
+```
+
+Linear model with BSB
+```{r lm for logbio}
+bsb.lm.bio <- lm(wtcpuenal ~ scaled.SBT + scaled.SST + depth + lag1.land_scaled + lag1.pres2,
+                 data=lag.dt[spp=="Centropristis striata"])
+summary(bsb.lm.bio)
+```
+
+```{r Fit biomass GAM models for all species, include=F}
+# pdf("Figures/FishClimGAMOut.bio.pdf", height=7, width=5)
+# mod.fish.clim.bio <- lag.dt[!(spp %in% catch.scale[mean_land<1]$spp),j={
+#   print(spp)
+#   t.dt <- .SD
+#   num.rec.fished <- length(t.dt$land_mt>0)
+#   if(num.rec.fished >5){
+#     mod.b <- gam(wtcpuenal ~ s(scaled.SBT)+ s(scaled.SST)+ s(depth) + s(lag1.land_scaled) + s(lag1.pres2),
+#                  family=gaussian, data=t.dt)
+#     chi <- as.vector(summary(mod.b)$chi.sq)
+#     fval <- as.vector(summary(mod.b)$s.table[,3])
+#     pval <- as.vector(summary(mod.b)$s.pv)
+#     vars <- names(summary(mod.b)$chi.sq)
+#     
+#     par(mfrow=c(3,2))
+#     plot(mod.b)
+#     plot(fitted(mod.b), napredict(mod.b$na.action, mod.b$y), main=spp, 
+#          ylab="Observed", xlab="Fitted")
+#     
+#     list(vars=vars, chi=chi, fval=fval, pval=pval)
+#   }
+#   else{list(vars=NA, chi=NA, fval=NA, pval=NA)}
+# }, by=list(spp)]
+# dev.off()
+```
+
+### Mixed Effects GAM for Log Bio
+Species as random effect
+See random effects in mgcv https://stat.ethz.ch/R-manual/R-devel/library/mgcv/html/random.effects.html
+
+Model (log bio) ~ scaled SBT + scaled SST + depth + landings in yr-1 + presence in yr-1 + random(spp)
+
+```{r mixed effects GAM logbio}
+### All species single model
+spplim.mod.bio <- gam(wtcpuenal ~ s(scaled.SBT)+ s(scaled.SST)+ s(depth) + s(lag1.land_scaled) + s(lag1.pres2)+ s(spp, bs="re"),
+               family=gaussian, data=lag.dt[spp%in%c("Gadus morhua", "Squalus acanthias", "Limanda ferruginea", "Centropristis striata")])
+summary(spplim.mod.bio)
+gam.vcomp(spplim.mod.bio)
+```
+
+### Beta Regression for Presence
+
+```{r beta regression presence}
+### To use beta regression, need pres2 to be (0,1)
+lag.dt[,"pres2_beta":=ifelse(pres2==0, 0.00001, ifelse(pres2==1, 0.99999, pres2))]
+
+par(mfrow=c(2,2))
+plot(avg.SBT.max ~ lat.bin, lag.dt, ylab="Average SBT Max", xlab="Latitude Bin")
+plot(avg.SST.max ~ lat.bin, lag.dt, ylab="Average SST Max", xlab="Latitude Bin")
+boxplot(pres2 ~ lat.bin, lag.dt[spp=="Gadus morhua"], main="Atlantic Cod",
+        ylab="Mean Presence", xlab="Latitude Bin")
+boxplot(pres2 ~ lat.bin, lag.dt[spp=="Limanda ferruginea"], main="Yellowtail Flounder", 
+        ylab="Mean Presence", xlab="Latitude Bin")
+
+# par(mfrow=c(3,2))
+# plot(pres2 ~ avg.SST.max, lag.dtN[spp=="Gadus morhua"], main="Atlantic Cod",
+#      ylab="Mean Presence", xlab="Average SST Max")
+# plot(pres2 ~ avg.SST.max, lag.dtN[spp=="Limanda ferruginea"], main="Yellowtail Flounder",
+#      ylab="Mean Presence", xlab="Average SST Max")
+# plot(pres2 ~ lag.land_scaled, lag.dtN[spp=="Gadus morhua"], main="Atlantic Cod",
+#      ylab="Mean Presence", xlab="Scaled Landings t-1")
+# plot(pres2 ~ lag.land_scaled, lag.dtN[spp=="Limanda ferruginea"], main="Yellowtail Flounder",
+#      ylab="Mean Presence", xlab="Scaled Landings t-1")
+# plot(lag.land_scaled ~ lag.pres2, lag.dtN[spp=="Gadus morhua"], main="Atlantic Cod",
+#      ylab="Scaled Landings t-1", xlab="Mean Presence t-1")
+# plot(lag.land_scaled ~ lag.pres2, lag.dtN[spp=="Limanda ferruginea"], main="Yellowtail Flounder",
+#      ylab="Scaled Landings t-1", xlab="Mean Presence t-1")
+
+
+
+### Model (pres) ~ max SBT + max SST + depth + landings in yr-1 + presence in yr-1
+#### Test with cod
+cod.mod <- gam(pres2_beta ~ s(avg.SBT.max)+ s(avg.SST.max)+ s(depth) + s(lag1.land_scaled) + s(lag1.pres2),
+               family=betar(link="logit"), data=lag.dt[spp=="Gadus morhua"])
+
+summary(cod.mod)
+```
+
+```{r Fit presence GAM for all species, include=F}
+# ### Remove unfished and very lightly fished species
+# ### use scaled SST & SBT
+# pdf("Figures/FishClimGAMOut.pdf", height=7, width=5)
+# mod.fish.clim <- lag.dt[!(spp %in% catch.scale[mean_land<1]$spp),j={
+#   print(spp)
+#   t.dt <- .SD
+#   num.rec.fished <- length(t.dt$land_mt>0)
+#   if(num.rec.fished >5){
+#     mod.p <- gam(pres2_beta ~ s(scaled.SBT)+ s(scaled.SST)+ s(depth) + s(lag1.land_scaled) + s(lag1.pres2),
+#                  family=betar(link="logit"), data=t.dt)
+#     chi <- as.vector(summary(mod.p)$chi.sq)
+#     fval <- as.vector(summary(mod.p)$s.table[,3])
+#     pval <- as.vector(summary(mod.p)$s.pv)
+#     vars <- names(summary(mod.p)$chi.sq)
+#     
+#     par(mfrow=c(3,2))
+#     plot(mod.p)
+#     plot(fitted(mod.p), napredict(mod.p$na.action, mod.p$y), main=spp, 
+#          ylab="Observed", xlab="Fitted")
+#     
+#     list(vars=vars, chi=chi, fval=fval, pval=pval)
+#   }
+#   else{list(vars=NA, chi=NA, fval=NA, pval=NA)}
+# }, by=list(spp)]
+# dev.off()
+# 
+# mod.fish.clim.nopres <- lag.dt[!(spp %in% catch.scale[mean_land<1]$spp),j={
+#   print(spp)
+#   t.dt <- .SD
+#   num.rec.fished <- length(t.dt$land_mt>0)
+#   if(num.rec.fished >5){
+#     mod.p <- gam(pres2_beta ~ s(avg.SBT.max)+ s(avg.SST.max)+ s(depth) + s(lag1.land_scaled),
+#                  family=betar(link="logit"), data=t.dt)
+#     chi <- as.vector(summary(mod.p)$chi.sq)
+#     pval <- as.vector(summary(mod.p)$s.pv)
+#     vars <- names(summary(mod.p)$chi.sq)
+#     
+#     par(mfrow=c(3,2))
+#     plot(mod.p)
+#     plot(fitted(mod.p), napredict(mod.p$na.action, mod.p$y), main=spp, 
+#          ylab="Observed", xlab="Fitted")
+#     qq.gam(mod.p)
+#     
+#     list(vars=vars, chi=chi, pval=pval)
+#   }
+#   else{list(vars=NA, chi=NA, pval=NA)}
+# }, by=list(spp)]
+
+```
+
+
+### Regression for Delta Presence
+
+```{r regression delta presence}
+lag.dt[,"pres2_delta":=pres2 - lag1.pres2]
+lag.dt[,"SBT.delta":=avg.SBT.max - lag1.avg.SBT.max]
+lag.dt[,"SST.delta":=avg.SST.max - lag1.avg.SST.max]
+lag.dt[,"lag.land.delta":=land_scaled - lag1.land_scaled]
+
+### Low deviance explained for delta temperatures
+delta.cod.mod <- gam(pres2_delta ~ s(SBT.delta) + s(SST.delta)+ s(depth) + s(lag1.land_scaled),
+                     data=lag.dt[spp=="Gadus morhua"])
+
+### Really low deviance explained for absolute temperatures
+delta.cod.mod2 <- gam(pres2_delta ~ s(avg.SBT.max) + s(avg.SST.max)+ s(depth) + s(lag1.land_scaled),
+                     data=lag.dt[spp=="Gadus morhua"])
+summary(delta.cod.mod2)
+```
+
+
+
+### First Differences Econometrics Model
+Laura found a reference where if not much variation in the explanatory variables over a single time period, can take difference over longer lag (and drop out intervening year?)
+If we want to go this route, Laura will read more on it
+```{r first differences}
+lag.dt[,"bio_delta":=wtcpuenal - lag1.wtcpuenal]
+# fd.bio.cod <- gam(bio_delta ~ s(SBT.delta) + s(SST.delta)+ s(lag.land.delta),
+#                   data=lag.dt[spp=="Gadus morhua"])
+fd.bio.bsb <- lm(bio_delta ~ (SBT.delta) + (SST.delta)+ (lag.land.delta),
+                  data=lag.dt[spp=="Centropristis striata"])
+summary(fd.bio.bsb)
+```
+### Manual Fixed Effects Econometrics Model
+
+Substract off mean of each variable for each latitude bin and species
+
+```{r fixed effects}
+
+fe.dt <- lag.dt[,list(m.pres2=mean(pres2, na.rm=T),
+                             m.wtcpuenal=mean(wtcpuenal, na.rm=T),
+                             m.land =mean(land_scaled, na.rm=T),
+                             m.SBT=mean(SBT.actual, na.rm=T),
+                             m.SST=mean(SST.actual, na.rm=T)),
+                       by=list(spp, lat.bin)]
+
+fe.dt2 <- merge(lag.dt[!(lat.bin %in% c("30.5", "31.5", "32.5", "33.5", "34.5"))],
+                fe.dt, by=c("spp", "lat.bin"))
+
+fe.dt2[,"fe.pres2":=pres2 - m.pres2]
+fe.dt2[,"fe.wtcpuenal":=wtcpuenal - m.wtcpuenal]
+fe.dt2[,"fe.lag.land":=lag1.land_scaled - m.land]
+fe.dt2[,"fe.SBT":=SBT.actual - m.SBT]
+fe.dt2[,"fe.SST":=SST.actual - m.SST]
+
+fe.mod.bsb <- gam(fe.wtcpuenal ~ s(fe.lag.land) + s(fe.SBT) + s(fe.SST) + s(depth), data=fe.dt2[spp=="Centropristis striata"])
+fe.mod.bsb.lm <- lm(fe.wtcpuenal ~ fe.lag.land + fe.SBT + fe.SST + depth, data=fe.dt2[spp=="Centropristis striata"])
+
+summary(fe.mod.bsb)
+
+par(mfrow=c(2,2))
+plot(fe.mod.bsb)
+# higher landings than average in the previous year associated with higher than average biomass this year 
+```
+
+
+### Panel Data Approaches
+ Based on Ethan Addicott's code
+ 
+### Prep the panel data
+```{r Panel Data Prep}
+library(plm)
+df <- combined.dat2[spp=="Centropristis striata"]
+setorder(df, lat.bin, year)
+
+### Create the panel
+p.df <- pdata.frame(df, index = c("lat.bin","year"))
+
+### Lag landings by one year (in same lat.bin)
+p.df$land_mt.lag.1 <- lag(p.df$land_mt, k = 1)
+
+### Lag biomass by one year
+p.df$wtcpuenal.lag.1 <- lag(p.df$wtcpuenal, k = 1)
+
+### Lag presence
+p.df$lag1.pres2 <- lag(p.df$pres2, k=1)
+
+```
+
+### Compare lags produced by shift vs plm::lag
+```{r compare lags}
+head(lag.dt[spp=="Centropristis striata" & lat.bin==40.5, 
+            list(lag1.land_mt=lag1.land_mt,
+                 lag1.wtcpuenal=lag1.wtcpuenal, 
+                 SBT.actual=SBT.actual,
+                 SST.actual=SST.actual,
+                 depth=depth,
+                 year=year, lat.bin=lat.bin)])
+
+head(subset(p.df, lat.bin==40.5, 
+            select=c("land_mt.lag.1", "wtcpuenal.lag.1", "SBT.actual", "SST.actual", "depth","year")))
+```
+
+##### Fixed Effects Panel model 
+(similar to what I did manually in the previous section of code). 
+ Documentation from plm vignette https://cran.r-project.org/web/packages/plm/vignettes/plm.pdf
+The standard way of estimating fixed effects models with, say, group effects entails transforming the data by subtracting the average over time to every variable, which is usually termed time-demeaning. --> model="within"", effect="individiual"
+Time effects transforms the data by subtracting the average over the group to every variable= group-demeaning --> model="within", effect="time"
+Both would be model="within", effect="twoways"
+```{r Panel Fixed Effects for Lat Bin}
+m.fe <- plm(wtcpuenal ~ SBT.actual + SST.actual + depth+ wtcpuenal.lag.1+ land_mt.lag.1, data=p.df, model="within", effect="individual")
+summary(m.fe)
+
+### Display fixed effects
+### Without lagged bio, these were the mean biomass in the lat bin
+### With lag.wtcpuenal in the model, these effects are how vary with latitude +/- that predicted from the lagged biomass
+fixef(m.fe)
+
+### Test for serial correlation
+pbgtest(m.fe) #outcome there still IS serial correlation even with lag.bio in the model!
+```
+
+```{r Panel Fixed Effects for Both Time and Individual}
+m.fe.both <- plm(wtcpuenal ~ SBT.actual + SST.actual + depth+ land_mt.lag.1, data=p.df, model="within", effect="twoways")
+summary(m.fe.both)
+```
+
+##### Create instrumental variables for catch to reduce endogeneity with wtcpue
+Create position lags
+```{r Need to lag position now}
+lats <- unique(p.df$lat.bin)
+p.df$land_mt.northlag.1 <- NA
+for (i in 1:length(lats) - 1) {
+for (j in 1972:2014) {
+  north.name <- paste(lats[i + 1],"-",j, sep = "")
+  name <- paste(lats[i],"-",j, sep = "")
+  if (is.na(as.logical(p.df$land_mt[north.name])) == FALSE & is.na(as.logical(p.df$land_mt[name])) == FALSE) {
+  p.df$land_mt.northlag.1[name] <- p.df$land_mt[north.name]
+  }
+  else if (is.na(as.logical(p.df$land_mt[name])) == FALSE)  {
+    p.df$land_mt.northlag.1[name] <- NA
+  }
+}
+}
+
+
+p.df$land_mt.southlag.1 <- NA
+for (i in 2:length(lats)) {
+for (j in 1963:2014) {
+  south.name <- paste(lats[i - 1],"-",j, sep = "")
+  name <- paste(lats[i],"-",j, sep = "")
+  if (is.na(as.logical(p.df$land_mt[south.name])) == FALSE & is.na(as.logical(p.df$land_mt[name])) == FALSE) {
+  p.df$land_mt.southlag.1[name] <- p.df$land_mt[south.name]
+  }
+  else if (is.na(as.logical(p.df$land_mt[name])) == FALSE)  {
+    p.df$land_mt.southlag.1[name] <- NA
+  }
+}
+}
+```
+
+Creates time lags for the position lags (eg nlag.ylag.1 is landings in the north, last year)
+```{r Time lag position lags}
+p.df$land_mt.nlag.ylag.1 <- lag(p.df$land_mt.northlag.1, k = 1)
+p.df$land_mt.nlag.ylag.2 <- lag(p.df$land_mt.northlag.1, k = 2)
+p.df$land_mt.slag.ylag.1 <- lag(p.df$land_mt.southlag.1, k = 1)
+p.df$land_mt.slag.ylag.2 <- lag(p.df$land_mt.southlag.1, k = 2)
+
+```
+
+##### Include instrumental variables in the fixed effects model
+ instruments after the |
+ 
+ if the model is y ~x1 + x2 + x3 with x1 and x2 endogenous and z1 and z2 external instruments
+ formula=y~x1+x2+x3 | x3 + z1 + z2 Or equivalently
+ formula=y~x1+x2+x3 | . -x1-x2+z1+z2 (eg subtract out x1 and x1 and add in z1 and z2)
+
+Instrumental variables with twoway fixed effects 
+```{r Instrumental variable with twoway fixed effects}
+m.14 <- plm(wtcpuenal~SBT.actual + SST.actual + depth + land_mt.lag.1 | SBT.actual + SST.actual + depth + land_mt.nlag.ylag.1 + land_mt.slag.ylag.1, data = p.df, model = "within", effect = "twoways")
+summary(m.14)
+```
+
+Instrumental variables with lat bin fixed effect and lagged presence
+```{r Instrumental lat bin fe and lagged pres}
+m.15 <- plm(wtcpuenal~SBT.actual + SST.actual + depth + lag1.pres2 + land_mt.lag.1 | SBT.actual + SST.actual + depth + land_mt.nlag.ylag.1 + land_mt.slag.ylag.1, data = p.df, model = "within", effect = "individual")
+summary(m.15)
+```
+
+### Using fixed effects in non-plm framework
+
+
+To recreate fixed effects but potentially use modeling framework other than linear model, make dummy variable for individual effect that is a factor (rather than lat.bin as continuous variable)
+Example: fixed.dum <-lm(y ~ x1 + factor(country) - 1, data=Panel)
+
+Stack exchange about dealing with autocorrelation
+https://stats.stackexchange.com/questions/181257/correcting-for-autocorrelation-in-simple-linear-regressions-in-r
+Change the model specification to obtain non-autocorrelated errors. For example, run a regression with ARMA errors (easy to implement by arima or auto.arima functions in R including the regressors via the parameter xreg) or -- as DJohnson suggested -- include lags of dependent variable as regressors.
+So, is having lagged presence (or biomass) sufficient?
+Potentially can evaluate by plotting bio t against bio t-1
+
+
+Similar (but not identical) results to m.fe
+Coefficients for each lat bin very similar to what get with fixef(m.fe)
+```{r lat bin dummy}
+mod.lbin.dum <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + lag1.wtcpuenal + lag1.land_mt + lat.bin - 1, data=lag.dt[spp=="Centropristis striata"])
+
+### Using the p.df instead
+mod.lbin.dum.p <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + wtcpuenal.lag.1 + land_mt.lag.1 + lat.bin - 1, data=p.df)
+
+
+
+drop1(mod.lbin.dum, test="F")
+
+### Compare with gam
+gam.lbin.dum <- gam(wtcpuenal ~ s(SBT.actual) + s(SST.actual) + depth + lag1.wtcpuenal + lag1.land_mt + lat.bin - 1, data=lag.dt[spp=="Centropristis striata"])
+```
+
+#### Plot effect using jtools
+By default, all numeric predictors other than the one specified in the pred argument are meancentered
+```{r plot effect}
+mod.cod1 <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + lag1.land_mt + lag1.land_mt + lat.bin - 1, data=lag.dt[spp=="Gadus morhua" & pres2!=0])
+
+mod.hp1 <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + lag1.land_mt + lag1.land_mt + lat.bin - 1, data=lag.dt[spp=="Hippoglossoides platessoides" & pres2!=0])
+
+mod.pa1 <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + lag1.land_mt + lag1.land_mt + lat.bin - 1, data=lag.dt[spp=="Pseudopleuronectes americanus" & pres2!=0])
+
+mod.pm1 <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + lag1.land_mt + lag1.land_mt + lat.bin - 1, data=lag.dt[spp=="Placopecten magellanicus" & pres2!=0])
+
+mod.lo1 <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + lag1.land_mt + lag1.land_mt + lat.bin - 1, data=lag.dt[spp=="Leucoraja ocellata" & pres2!=0])
+
+mod.la1 <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + lag1.land_mt + lag1.land_mt + lat.bin - 1, data=lag.dt[spp=="Lophius americanus" & pres2!=0])
+
+library(jtools)
+effect_plot(mod.cod1, pred = lag1.land_mt, interval = TRUE, plot.points = TRUE, main.title="Gadus morhua")
+effect_plot(mod.hp1, pred = lag1.land_mt, interval = TRUE, plot.points = TRUE, main.title="Hippoglossoides platessoides")
+
+effect_plot(mod.pm1, pred = lag1.land_mt, interval = TRUE, plot.points = TRUE, main.title="Placopecten magellanicus")
+effect_plot(mod.lo1, pred = lag1.land_mt, interval = TRUE, plot.points = TRUE, main.title="Leucoraja ocellata")
+
+effect_plot(mod.la1, pred = lag1.land_mt, interval = TRUE, plot.points = TRUE, main.title="Lophius americanus")
+
+
+
+```
+
+
+### Fit lm with dummy for lat bin all species
+```{r lm lat bin dummy all spp}
+mod.lbin.dum.all <- lag.dt[,j={
+  print(spp)
+  t.dt <- .SD
+  m <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + lag1.wtcpuenal + land_mt + lat.bin - 1, data=t.dt)
+  list(var=dimnames(summary(m)$coefficients)[[1]],
+       est=summary(m)$coefficients[,1],
+       pval=summary(m)$coefficients[,4],
+       mean_land=unique(mean_land))
+}, by=list(spp)]
+
+### 4spp (7 if 0.1) have significant negative coefficient for fishing if use scaled landings 
+### 12 spp (19 if 0.1) have positive coefficient
+### BSB, summer flounder, and red hake are marginal
+### Only 78 species total have a coefficient
+### Unfished species don't have a coefficient for scaled landings (because doesn't vary?)
+mod.lbin.dum.all[var=="land_mt"&est < 0 & pval<0.05]
+mod.lbin.dum.all[var=="land_mt"&est > 0 & pval<0.05]
+
+
+## 112 of 121 species have lagged bio as significant
+mod.lbin.dum.all[var=="lag.wtcpuenal" & pval<0.1]
+
+```
+
+Why Positive effect of fishing on biomass even with lagged biomass in regression
+Fish a lot last year, survey catches more than expect from last year's biomass--> why?
+If fishing a better index of abundance (because integrated the whole year), maybe + predictor
+Maybe lag 2 years for fishing (maybe too much overlap based on when year summed for landings)
+or 3 year average? or 3 years separate
+Maybe biomass lag 2 years
+Or some trend, low catches then bio lower the next year, because both tracking down or up
+Wouldn't  lag bio control for the shared trend?
+Fish there last year, survey doesn't show (or would be in lagged bio)?
+is the fishery catching smaller fish than show up in survey?
+
+### Fit lm with dummy for lat bin all species and scaled landing lagged 2 years for the species
+```{r lm lat bin dummy all spp lag2}
+mod.lbin.dum.all.lag2 <- lag.dt[,j={
+  print(spp)
+  m <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + lag1.wtcpuenal + lag2.land_scaled + lat.bin - 1, data=.SD)
+  list(var=dimnames(summary(m)$coefficients)[[1]], 
+       est=summary(m)$coefficients[,1],
+       pval=summary(m)$coefficients[,4],
+       mean_land=unique(mean_land))
+}, by=list(spp)]
+
+### 6spp (10 if 0.1) have significant negative coefficient for fishing if use scaled landings 
+### 12 spp (14 if 0.1) have positive coefficient
+### BSB, summer flounder, and red hake are marginal
+### Only 78 species total have a coefficient
+### Unfished species don't have a coefficient for scaled landings (because doesn't vary?)
+mod.lbin.dum.all.lag2[var=="lag2.land_scaled"&est < 0]
+mod.lbin.dum.all.lag2[var=="lag2.land_scaled"&est < 0 & pval<0.1]
+mod.lbin.dum.all.lag2[var=="lag2.land_scaled"&est > 0 & pval<0.1]
+
+```
+
+
+### Fit lm with dummy for lat bin all species and scaled landing lagged 3 years for the species
+```{r lm lat bin dummy all spp lag 3}
+mod.lbin.dum.all.lag3 <- lag.dt[,j={
+  print(spp)
+  m <- lm(wtcpuenal ~ SBT.actual + SST.actual + depth + lag1.wtcpuenal + lag3.land_scaled + lat.bin - 1, data=.SD)
+  list(var=dimnames(summary(m)$coefficients)[[1]], 
+       est=summary(m)$coefficients[,1],
+       pval=summary(m)$coefficients[,4],
+       mean_land=unique(mean_land))
+}, by=list(spp)]
+
+### 6spp (8 if 0.1) have significant negative coefficient for fishing if use scaled landings 
+### 11 spp (16 if 0.1) have positive coefficient
+### BSB, summer flounder, and red hake are marginal
+### Only 78 species total have a coefficient
+### Unfished species don't have a coefficient for scaled landings (because doesn't vary?)
+mod.lbin.dum.all.lag3[var=="lag3.land_scaled"&est < 0]
+mod.lbin.dum.all.lag3[var=="lag3.land_scaled"&est < 0 & pval<0.05]
+mod.lbin.dum.all.lag3[var=="lag3.land_scaled"&est > 0 & pval<0.05]
+
+```
+
+
+
+
+The end of the plm vignette shows how many of the fixed effect approaches can be done similarly using a glmm framework (with latitude bin as random effect)
+Ben Bolker has a brain dump about how you'd incorporate spatial or temporal correlations in R within glmm
+https://bbolker.github.io/mixedmodels-misc/notes/corr_braindump.html
+
+Apparently also possible with gamm
+m3 <- gamm(y ~ s(xt, k = 20), correlation = corAR1(form = ~ time))
+https://www.fromthebottomoftheheap.net/2011/07/21/smoothing-temporally-correlated-data/
+Note: the bad fit with his normal gam was due to the specification of k=20, and the default GCV smoothness selection which doesn't perform as well as ML or REML
+
+
+
+
+
+
