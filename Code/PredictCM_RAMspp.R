@@ -5,6 +5,9 @@ library(Hmisc)
 
 load("Data/hauls_catch_Dec2017.RData", verbose=T)
 
+ram.stocks <- readRDS("Data/ram.stock.us.rds")
+setorder(ram.stocks, scientificname)
+
 ### Species catch by haul
 catch.dt <- as.data.table(dat)
 haul.dt <- as.data.table(hauls)
@@ -30,16 +33,47 @@ haul.stratum.obs2[,"frac.yrs":=num.yrs.obs/num.yrs.surv]
 ### Limit to strata observed in >=90% of years of a survey & year >=1968 (so both spring and fall combined for NEUS)
 haul.dt2 <- haul.dt[stratum %in% haul.stratum.obs2[frac.yrs>=0.9]$stratum & year>=1968]
 catch.dt2 <- catch.dt[haulid %in% haul.dt2$haulid]
+catch.dt2[,"spp":=capitalize(gsub("_.*$", "", sppocean))]
+
+
+### Limit to just RAM species
+catch.dt.ram <- catch.dt2[spp %in% ram.stocks$scientificname]
+
 
 ### Merge with haul location
-catch.wloc <- merge(catch.dt2, 
-                    haul.dt2[,list(haulid=haulid, lat=lat, lon=lon, regionfact=regionfact, subarea, ocean, year=year, month=month)], 
+catch.wloc <- merge(catch.dt.ram, 
+                    haul.dt2[,list(haulid=haulid, regionfact=regionfact)], 
                     by=c("haulid"))
-catch.wloc[,"spp":=capitalize(gsub("_.*$", "", sppocean))]
 
+### Create master sheet where every species
+haul.master <- catch.wloc[,j={
+  t.dt <- .SD
+  temp <- CJ(haulid=unique(t.dt$haulid), sppocean=unique(t.dt$sppocean))
+}, by=list(regionfact)]
+haul.master[,"spp":=capitalize(gsub("_.*$", "", sppocean))]
 
+### Merge back into haul.dt2 to get other data
+haul.master.meta <- merge(haul.master, haul.dt2, by=c("haulid", "regionfact"))
 
-### Clim Fits (don't run for loop, just load output)
+### Keep only the variables I want for all hauls
+keep.cols <- c("haulid", "regionfact", "subarea", "spp", "sppocean", "lat", "lon", "stratum",
+               "region", "year", "month", "depth", "rugosity", "GRAINSIZE",
+               "SBT.actual", "SST.actual", "SBT.seasonal", "SST.seasonal.mean", 
+               "SBT.min", "SBT.max", "SST.min", "SST.max")
+haul.master.meta <- haul.master.meta[,keep.cols, with=F]
+
+## This confirms that every species had all hauls in a region represented
+with(haul.master.meta[regionfact=="NEFSC_NEUS" & spp %in% c("Gadus morhua", "Centropristis striata", "Urophycis chuss")], 
+     table(year, spp))
+
+### Merge with catch data, and add zeros where not observed
+catch.w.zeros <- merge(haul.master.meta, catch.wloc, by=c("haulid", "spp", "sppocean", "regionfact"), all.x=T)
+catch.w.zeros[,"wtcpue":=ifelse(is.na(wtcpue), 0, wtcpue)]
+catch.w.zeros[,"logwtcpue":=ifelse(is.na(logwtcpue), -10, logwtcpue)]
+catch.w.zeros[,"presfit":=ifelse(is.na(presfit), FALSE, presfit)]
+setorder(catch.w.zeros, sppocean)
+
+### Clim Fits 
 ### From Jim Morley
 ### Downloaded from Amphiprion nicheMods_PlosOne2018
 mod_list <- list.files("Data/CEmods", ".RData")
@@ -47,91 +81,113 @@ sppocean_list <- gsub("CEmods_Nov2017_fitallreg_2017_", "", gsub(".RData", "", m
 
 spp_lookup <- data.table(sppocean=sppocean_list)
 spp_lookup[,"spp":=capitalize(gsub("_.*$", "", sppocean))]
-# 
-# pred_list <- vector("list", length(sppocean_list))
-# 
-# 
-# pred_list <- vector("list", length(sppocean_list))
-# 
-# for(i in 1:length(mod_list)){
-#   print(sppocean_list[i])
-#   load(paste0("Data/CEmods/", mod_list[i]), verbose=T)
-#   
-#   dt.fit <- as.data.table(mods$mygam1$model)
-#   dt.fit.bio <- as.data.table(mods$mygam2$model)
-#   region.orig <- levels(dt.fit$regionfact) #original fit only had some regions
-#   
-#   cols.dt.fit <- colnames(dt.fit)
-#   haul.dt.lim <- merge(haul.dt2, dt.fit, by=cols.dt.fit[cols.dt.fit != "presfit"])
-# 
-#   pred.fit <- predict(mods$mygam1, newdata=haul.dt.lim, type="response")
-#   pred.fit.bio <- predict(mods$mygam2, newdata=haul.dt.lim, type="response")
-#   
-#   ### Combined prediction (pred.pres * exp(pred.log.bio))
-#   pred.total<- pred.fit * exp(pred.fit.bio)
-#   
-#   pred_list[[i]] <- data.table(haulid=haul.dt.lim$haulid,
-#                                stratum=haul.dt.lim$stratum,
-#                                year=haul.dt.lim$year,
-#                                month=haul.dt.lim$month,
-#                                regionfact=haul.dt.lim$regionfact,
-#                                lat=haul.dt.lim$lat,
-#                                lon=haul.dt.lim$lon,
-#                                depth=haul.dt.lim$depth,
-#                                bottemp=haul.dt.lim$bottemp,
-#                                surftemp=haul.dt.lim$surftemp,
-#                                SST.seasonal.mean=haul.dt.lim$SST.seasonal.mean,
-#                                SBT.seasonal=haul.dt.lim$SBT.seasonal,
-#                                presfit=haul.dt.lim$presfit,
-#                                pred.pres=pred.fit, 
-#                                pred.log.bio=pred.fit.bio,
-#                                pred.total=pred.total,
-#                                sppocean=sppocean_list[i])
-# }
-# 
-# #pred.dt <- rbindlist(pred_list)
-# #saveRDS(pred.dt, "Output/pred.dt.rds")
-# 
-# #saveRDS(pred.dt, "Output/yellowtail.pred.rds")
 
+
+
+pred.dt <- catch.w.zeros[sppocean %in% spp_lookup$sppocean,j={
+  print(sppocean)
+  t.dt <- .SD
+  spp <- which(sppocean_list==eval(sppocean))
+  
+  load(paste0("Data/CEmods/", mod_list[spp]), verbose=T)
+  
+  dt.fit <- as.data.table(mods$mygam1$model)
+  dt.fit.bio <- as.data.table(mods$mygam2$model)
+  region.orig <- levels(dt.fit$regionfact) #original fit only had some regions
+  
+  # some didn't have regionfact in there (potentially for spp in single regions?)
+  if(!(is.null(region.orig))){
+    sub <- t.dt[regionfact %in% region.orig]
+  } else{sub <- copy(t.dt)}
+  
+  
+  sub[,"pred.pres" := predict(mods$mygam1, newdata=sub, type="response")]
+  sub[,"pred.log.bio":=predict(mods$mygam2, newdata=sub, type="response")]
+  
+  ### Combined prediction (pred.pres * exp(pred.log.bio))
+  sub[,"pred.total":=pred.pres * exp(pred.log.bio)]
+  
+
+  list(haulid=sub$haulid,
+       spp=sub$spp,
+       regionfact=sub$regionfact,
+       subarea=subarea,
+       lat=sub$lat,
+       lon=sub$lon,
+       stratum=sub$stratum,
+       region=sub$region,
+       year=sub$year,
+       month=sub$month,
+       depth=sub$depth,
+       SBT.actual=sub$SBT.actual,
+       SBT.seasonal=sub$SBT.seasonal,
+       SST.seasonal.mean=sub$SST.seasonal.mean,
+       SBT.min=sub$SBT.min,
+       SBT.max=sub$SBT.max,
+       SST.min=sub$SST.min,
+       SST.max=sub$SST.max,
+       wtcpue=sub$wtcpue,
+       logwtcpue=sub$wtcpue,
+       presfit=sub$presfit,
+       pred.pres=sub$pred.pres,
+       pred.log.bio=sub$pred.log.bio,
+       pred.total=sub$pred.total)  
+  
+}, by=list(sppocean)]
+
+pred.dt[is.na(spp), unique(sppocean)]
+
+
+saveRDS(pred.dt, "Output/pred.dt.rds")
+
+#Run if want to read in existing output
 pred.dt <- readRDS("Output/pred.dt.rds")
-pred.dt[,"spp":=capitalize(gsub("_.*$", "", sppocean))]
-
-### Link with subarea
-pred.dt.wsub <- merge(pred.dt, haul.dt2[,list(subarea=subarea, haulid=haulid)], by=c("haulid"))
 
 
 
 
-### Observed centroid
-cent.obs <- catch.wloc[spp %in% spp_lookup$spp,
-                       list(lat.cent=weighted.mean(lat, w=wtcpue),
-                            lat.cent.pres=weighted.mean(lat, w=presfit),
-                            num.obs=sum(presfit)), 
-                       by=list(spp, sppocean, subarea, year)]
-setorder(cent.obs, year)
+##################################
+### Centroids in each year (and lagged)
+
+### Centroid in each year, and mean environmental variables
+### Averaging across fall and spring (previously limited to 1968 and later)
+spp_dist <- pred.dt[,list(obs.lat=weighted.mean(lat, wtcpue),
+                          obs.lon=weighted.mean(lon, wtcpue),
+                          obs.depth=weighted.mean(depth, wtcpue),
+                          SBT.seasonal=mean(SBT.seasonal),
+                          SST.seasonal=mean(SST.seasonal.mean),
+                          SBT.min=mean(SBT.min),
+                          SST.min=mean(SST.min),
+                          SBT.max=mean(SBT.max),
+                          SST.max=mean(SST.max),
+                          wtcpue=mean(wtcpue),
+                          freq.occ=mean(presfit),
+                          pred.lat.pres=weighted.mean(lat, pred.pres),
+                          pred.lon.pres=weighted.mean(lon, pred.pres),
+                          pred.depth.pres=weighted.mean(depth, pred.pres),
+                          pred.lat.bio=weighted.mean(lat, pred.total),
+                          pred.lon.bio=weighted.mean(lon, pred.total),
+                          pred.depth=weighted.mean(depth, pred.total),
+                          nyrs.obs=length(unique(year[sum(presfit)>1]))),
+                    by=list(spp, sppocean, subarea, year)]
 
 
-### Predicted centroid
-cent.cm <- pred.dt.wsub[!(is.na(subarea)),list(lat.cent.cm =weighted.mean(lat, w=pred.total),
-                    lat.cent.pres.cm=weighted.mean(lat, w=pred.pres)),
-              by=list(spp, sppocean, subarea, year)]
-setorder(cent.cm, year)
+# Matches Jim's gams in bsb_gamVSbrt_allseasons.pdf email from 10/9/2018
+plot(obs.lat ~ year, spp_dist[spp=="Centropristis striata" & subarea=="US East Coast"], type="o")
+points(pred.lat.bio ~ year, spp_dist[spp=="Centropristis striata" & subarea=="US East Coast"], type="o", col="blue")
 
 
 
+### Lead variables
+vars <- colnames(spp_dist)[!(colnames(spp_dist)%in% c("spp", "sppocean", "subarea", "year", "nyrs.obs"))]
 
-### Merge observed and predicted (more records when predicting when no observations of a species in that year)
-cent_master <- merge(cent.obs, cent.cm, by=c("sppocean", "spp", "subarea", "year"), all.y=T)
-cent_master[,"nyrs.obs":=length(unique(year[is.finite(num.obs)])), by=list(spp, subarea)]
+lead1cols <- paste("lead1", vars, sep=".")
 
-# ### Centroid in previous year for obs and predicted
-# cent_master[,"lat.cent.prev":=data.table::shift(lat.cent, n=1, type="lag"), by=list(sppocean, spp, subarea)]
-# cent_master[,"lat.cent.cm.prev":=data.table::shift(lat.cent.cm, n=1, type="lag"), by=list(sppocean, spp, subarea)]
-# 
-# ### Annual difference
-# cent_master[,"lat.cent.diff":= lat.cent - lat.cent.prev, by=list(sppocean, spp, subarea)]
-# cent_master[,"lat.cent.cm.diff":=lat.cent.cm - lat.cent.cm.prev, by=list(sppocean, spp, subarea)]
+lead.dt <- copy(spp_dist)
+
+lead.dt[,(lead1cols):=shift(.SD, n=1, type="lead"), by=list(spp, lat.bin), .SDcols=vars]
+
+
 
 ### Centroid in next year for obs and predicted
 cent_master[,"lat.cent.next":=data.table::shift(lat.cent, n=1, type="lead"), by=list(sppocean, spp, subarea)]
