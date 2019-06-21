@@ -33,6 +33,8 @@ stock.us[,"subarea":=ifelse(is.na(ram_subarea), region,
                                                                                      ifelse(ram_subarea=="ATL", "SEUS",
                                                                                         ifelse(ram_subarea=="GM", "GMex", NA))))))))))))]
 
+#saveRDS(stock.us, "Data/ram.stock.us.rds")
+
 ### Years in survey
 yrs.surv <- data.table(region=c("US East Coast", "US Alaska", "US West Coast", "US Southeast and Gulf", "Canada East Coast"),
                        min.survyr=c(1968, 1981, 1981, 1981, 1971),
