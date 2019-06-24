@@ -1,6 +1,5 @@
 
 library(data.table)
-library(raster)
 library(Hmisc)
 
 load("Data/hauls_catch_Dec2017.RData", verbose=T)
@@ -151,7 +150,8 @@ pred.dt <- readRDS("Output/pred.dt.rds")
 
 ### Centroid in each year, and mean environmental variables
 ### Averaging across fall and spring (previously limited to 1968 and later)
-spp_dist <- pred.dt[,list(obs.lat=weighted.mean(lat, wtcpue),
+spp_dist <- pred.dt[complete.cases(lat, lon, depth),
+                    list(obs.lat=weighted.mean(lat, wtcpue),
                           obs.lon=weighted.mean(lon, wtcpue),
                           obs.depth=weighted.mean(depth, wtcpue),
                           SBT.seasonal=mean(SBT.seasonal),
@@ -167,69 +167,62 @@ spp_dist <- pred.dt[,list(obs.lat=weighted.mean(lat, wtcpue),
                           pred.depth.pres=weighted.mean(depth, pred.pres),
                           pred.lat.bio=weighted.mean(lat, pred.total),
                           pred.lon.bio=weighted.mean(lon, pred.total),
-                          pred.depth=weighted.mean(depth, pred.total),
-                          nyrs.obs=length(unique(year[sum(presfit)>1]))),
+                          pred.depth=weighted.mean(depth, pred.total)),
                     by=list(spp, sppocean, subarea, year)]
-
+setorder(spp_dist, spp, sppocean, subarea, year)
 
 # Matches Jim's gams in bsb_gamVSbrt_allseasons.pdf email from 10/9/2018
-plot(obs.lat ~ year, spp_dist[spp=="Centropristis striata" & subarea=="US East Coast"], type="o")
+plot(obs.lat ~ year, spp_dist[spp=="Centropristis striata" & subarea=="US East Coast"], type="o",
+     ylab="Latitude (w=wtcpue)")
 points(pred.lat.bio ~ year, spp_dist[spp=="Centropristis striata" & subarea=="US East Coast"], type="o", col="blue")
 
 
 
 ### Lead variables
-vars <- colnames(spp_dist)[!(colnames(spp_dist)%in% c("spp", "sppocean", "subarea", "year", "nyrs.obs"))]
+vars <- c("obs.lat", "obs.lon", "obs.depth", "pred.lat.bio", "pred.lon.bio", "pred.depth")
 
 lead1cols <- paste("lead1", vars, sep=".")
 
-lead.dt <- copy(spp_dist)
+cent_master_lim <- copy(spp_dist)
 
-lead.dt[,(lead1cols):=shift(.SD, n=1, type="lead"), by=list(spp, lat.bin), .SDcols=vars]
+cent_master_lim[,(lead1cols):=shift(.SD, n=1, type="lead"), by=list(spp, sppocean, subarea), .SDcols=vars]
 
 
 
-### Centroid in next year for obs and predicted
-cent_master[,"lat.cent.next":=data.table::shift(lat.cent, n=1, type="lead"), by=list(sppocean, spp, subarea)]
-cent_master[,"lat.cent.cm.next":=data.table::shift(lat.cent.cm, n=1, type="lead"), by=list(sppocean, spp, subarea)]
 
 ### Annual difference
-cent_master[,"lat.cent.diff":= lat.cent.next - lat.cent, by=list(sppocean, spp, subarea)]
-cent_master[,"lat.cent.cm.diff":=lat.cent.cm.next - lat.cent.cm, by=list(sppocean, spp, subarea)]
+cent_master_lim[,"lat.cent.diff":= lead1.obs.lat - obs.lat, by=list(sppocean, spp, subarea)]
+cent_master_lim[,"lat.cent.cm.diff":=lead1.pred.lat.bio - pred.lat.bio, by=list(sppocean, spp, subarea)]
 
 
 
 ### Observed - predicted annual diff
-cent_master[,"annual.obsminuspred":=lat.cent.diff - lat.cent.cm.diff]
-cent_master[,"sign.pred":=sign(lat.cent.cm.diff)]
-cent_master[,"annual.bias":=annual.obsminuspred*sign.pred]
+cent_master_lim[,"annual.obsminuspred":=lat.cent.diff - lat.cent.cm.diff]
+cent_master_lim[,"sign.pred":=sign(lat.cent.cm.diff)]
+cent_master_lim[,"annual.bias":=annual.obsminuspred*sign.pred]
 
-hist(cent_master$annual.bias)
+hist(cent_master_lim$annual.bias)
+
+cent_master_lim[,"nyrs.obs":=length(unique(year[is.finite(obs.lat)])), by=list(sppocean, spp, subarea)]
 
 
-#### Rate of change over time (only for species which were observed in at least 5 years in a subarea)
-### 185 spp, subarea combinations
-cent_lm <- cent_master[nyrs.obs > 5,j={
+#### Rate of change over time for spp sub area combinations with at least 5 years of observations
+### 271 spp, subarea combinations
+cent_lm <- cent_master_lim[nyrs.obs>5,j={
   print(paste0(spp, " ", subarea))
   t.dt <- .SD
-  lm.obs <- lm(lat.cent ~ year)
-  lm.pred <- lm(lat.cent.cm ~ year, t.dt)
+  lm.obs <- lm(obs.lat ~ year)
+  lm.pred <- lm(pred.lat.bio ~ year, t.dt)
   list(lm.obs.slope=summary(lm.obs)$coefficients[2,1], 
        lm.obs.p=summary(lm.obs)$coefficients[2,4],
        lm.obs.r2=summary(lm.obs)$r.squared,
        lm.pred.slope=summary(lm.pred)$coefficients[2,1],
        lm.pred.p=summary(lm.pred)$coefficients[2,4],
-       lm.pred.r2=summary(lm.pred)$r.squared,
-       nyrs.obs=sum(is.finite(t.dt$num.obs)),
-       num.obs=sum(t.dt$num.obs, na.rm=T))
-}, by=list(spp, subarea)]
+       lm.pred.r2=summary(lm.pred)$r.squared)
+}, by=list(sppocean, spp, subarea, nyrs.obs)]
 
 cent_lm[,"obsminuspred":=ifelse(lm.pred.slope>0, lm.obs.slope - lm.pred.slope, -(lm.obs.slope-lm.pred.slope))]
 
-# Limit species to those observed in more than 5 years
-# Remove Canada and US Southeast (maybe keep those for just the fishing intensity analysis)
-#cent_master_lim <- cent_master[nyrs.obs > 5 & !(subarea %in% c("Canada East Coast", "US Southeast and Gulf"))]
-cent_master_lim <- cent_master[nyrs.obs > 5]
 
 
 png("Figures/lagclim_null.png", height=5, width=5, units="in", res=300)
@@ -240,34 +233,8 @@ abline(h=0, lty=2)
 abline(v=0, lty=2)
 dev.off()
 
-png("Figures/BSB_obsonly.png", height=5, width=5, units="in", res=300)
-plot(lat.cent ~ year, 
-     cent.obs[year >=1968 & sppocean=="centropristis striata_Atl" & subarea=="US East Coast"], 
-     type="o", ylab="Latitude (w=wtcpue)")
-abline(h=mean(cent.obs[year >=1968 & sppocean=="centropristis striata_Atl" & subarea=="US East Coast"]$lat.cent), 
-       col="darkgreen", lty=2, lwd=2)
-legend("topleft", legend=c("mean centroid"), col="darkgreen", lty=2, lwd=2, bty="n")
-dev.off()
-
-
-png("Figures/BSB_obspred.png", height=5, width=5, units="in", res=300)
-plot(lat.cent ~ year, 
-     cent.obs[year >=1968 & sppocean=="centropristis striata_Atl" & subarea=="US East Coast"], 
-     type="o", ylab="Latitude (w=wtcpue)")
-points(lat.cent.cm ~ year,
-       cent.cm[year>=1968 & sppocean=="centropristis striata_Atl" & subarea=="US East Coast"],
-       type="o", col="gray", ylab="Latitude (w=predicted wtcpue)")
-dev.off()
-
-### chilepepper rockfish
-png("Figures/chile_obspred.png", height=5, width=5, units="in", res=300)
-plot(lat.cent.cm ~ year,
-       cent.cm[year>=1968 & spp=="Sebastes goodei"],
-       type="o", col="gray", ylab="Latitude (w=predicted wtcpue)")
-points(lat.cent ~ year, 
-     cent.obs[year >=1968 & spp=="Sebastes goodei"], 
-     type="o", ylab="Latitude (w=wtcpue)")
-dev.off()
+plot(freq.occ ~ year, cent_master_lim[spp=="Centropristis striata" & subarea=="US East Coast"])
+plot(freq.occ ~ year, cent_master_lim[spp=="Gadus morhua" & subarea=="US East Coast"])
 
 
 save(cent_master_lim, cent_lm, file="Output/cent_out.RData")
